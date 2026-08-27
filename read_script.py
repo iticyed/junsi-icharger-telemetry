@@ -20,8 +20,8 @@ def parse_native_hid_packet(data_input):
     try:
         total_voltage = float(struct.unpack_from('<H', data, 14)[0]) / 1000.0
         current = float(struct.unpack_from('<h', data, 10)[0]) / 100.0
-
         raw_temp = struct.unpack_from('<H', data, 12)[0]
+
         if raw_temp < 2000:
             temp_c = float(raw_temp) / 10.0
         else:
