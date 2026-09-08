@@ -14,15 +14,18 @@ import threading
 
 
 class ICharger:
+ # USB HID device identifiers and protocol constants
     VENDOR_ID = 0x0483
     PRODUCT_ID = 0x5751
     HID_PACKET_SIZE = 64
     HID_FRAME_TYPE = 0x30
 
-    ADDR_DEVICE_INFO = 0x0000
-    ADDR_CHANNEL = {0: 0x0100, 1: 0x0200}
-    ADDR_CONTROL = 0x8000
+    ADDR_DEVICE_INFO = 0x0000   # device info registers
+    ADDR_CHANNEL_1 = 0x0100     # Channel 1 data
+    ADDR_CHANNEL_2 = 0x0200     # Channel 2 data 
+    ADDR_CONTROL = 0x8000       # control registers
 
+# control register offsets (from ADDR_CONTROL)
     CTRL_OPERATION = 0
     CTRL_MEMORY = 1
     CTRL_CHANNEL = 2
@@ -31,11 +34,14 @@ class ICharger:
     CTRL_LIMIT_CURRENT = 5
     CTRL_LIMIT_VOLTAGE = 6
 
+# the iCharger Modbus protocol requires a special unlock value before sending an order
+# otherwise the command is ignored.
     ORDER_UNLOCK = 0x55AA
     ORDER_STOP = 0
     ORDER_RUN = 1
     ORDER_MODIFY = 2
 
+# charger operation modes (for start command)
     OP_CHARGE = 0
     OP_STORAGE = 1
     OP_DISCHARGE = 2
@@ -64,7 +70,7 @@ class ICharger:
         return self.device is not None
 
     def connect(self):
-        """Open the USB HID connection. Returns True on success."""
+        # open the USB HID connection. returns True on success
         try:
             self.device = hid.device()
             self.device.open(self.VENDOR_ID, self.PRODUCT_ID)
@@ -89,7 +95,7 @@ class ICharger:
                 self.device = None
 
     def _transact(self, function_code, payload):
-        """Send one Modbus-HID request and return the response PDU."""
+        # send one Modbus-HID request and return the response PDU
         if not self.connected:
             self.error = "Not connected"
             return None
@@ -130,7 +136,7 @@ class ICharger:
             return data
 
     def read_input_regs(self, address, count):
-        """Function code 0x04 - read-only registers."""
+        # Function code 0x04 - read-only registers
         payload = bytes([
             address >> 8, address & 0xFF,
             count >> 8, count & 0xFF,
@@ -144,7 +150,7 @@ class ICharger:
         return [(raw[i] << 8) | raw[i + 1] for i in range(0, len(raw), 2)]
 
     def read_holding_regs(self, address, count):
-        """Function code 0x03 - read/write registers."""
+        # Function code 0x03 - read/write registers
         payload = bytes([
             address >> 8, address & 0xFF,
             count >> 8, count & 0xFF,
@@ -158,7 +164,7 @@ class ICharger:
         return [(raw[i] << 8) | raw[i + 1] for i in range(0, len(raw), 2)]
 
     def write_regs(self, address, values):
-        """Function code 0x10 - write consecutive registers."""
+        # Function code 0x10 - write consecutive registers
         count = len(values)
         payload = bytes([
             address >> 8, address & 0xFF,
@@ -191,8 +197,14 @@ class ICharger:
         }
 
     def read_status(self, channel):
-        """Read live status for channel 0 or 1."""
-        base = self.ADDR_CHANNEL[channel]
+        # Read live status for channel 0 or 1
+        if channel == 0:
+            base = self.ADDR_CHANNEL_1
+        elif channel == 1:
+            base = self.ADDR_CHANNEL_2
+        else:
+            raise ValueError("Invalid channel. Must be 0 or 1.")
+
         regs = self.read_input_regs(base, 30)
         if regs is None:
             return None
@@ -225,7 +237,7 @@ class ICharger:
         return regs[self.CTRL_MEMORY] if regs else 0
 
     def start(self, channel, operation=None):
-        """Start an operation using the currently selected memory preset."""
+        # Start an operation using the currently selected memory preset
         if operation is None:
             operation = self.OP_CHARGE
 
@@ -234,6 +246,7 @@ class ICharger:
         return self.write_regs(self.ADDR_CONTROL, values)
 
     def stop(self, channel):
+        # Stop the operation on the specified channel
         if not self.write_regs(self.ADDR_CONTROL + self.CTRL_CHANNEL, [channel]):
             return False
 
@@ -243,7 +256,7 @@ class ICharger:
         )
 
     def set_limits(self, channel, current_ma, voltage_mv):
-        """Set current/voltage limits, clamped to software safety limits."""
+        # Set current/voltage limits, clamped to software safety limits
         current_ma = max(0, min(current_ma, self.MAX_CURRENT_MA))
         voltage_mv = max(0, min(voltage_mv, self.MAX_VOLTAGE_MV))
 
