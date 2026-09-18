@@ -12,192 +12,123 @@
 # requires <pip install hidapi>
 
 
-import sys
-import threading
+import curses
 import time
 
 from icharger_control import ICharger
 
 
-class Monitor:
-    REFRESH_SECONDS = 1.0
-
-    def __init__(self, charger, channel):
-        self.charger = charger
-        self.channel = channel
-        self.typing = threading.Event()
-        self.running = True
-        self.timer = None
-
-    def render(self, status):
-        sys.stdout.write("\033[2J\033[H")
-
-        label = "CH1" if self.channel == 0 else "CH2"
-        print(f"iCharger 406 DUO - {label}\n")
-
-        if status is None:
-            print(f"  status read failed: {self.charger.error}")
-        else:
-            print(f"  Status:   {status['run_status_name']}")
-            print(f"  Voltage:  {status['voltage_v']:.3f} V")
-            print(f"  Current:  {status['current_a']:.2f} A")
-            print(f"  Capacity: {status['capacity_mah']} mAh")
-            print(f"  Temp:     {status['temp_c']:.1f} C")
-
-            if status["cells_mv"]:
-                cells = "  ".join(f"{value}mV" for value in status["cells_mv"])
-                print(f"  Cells:    {cells}")
-
-            if status["run_error"]:
-                print(f"  ERROR CODE: {status['run_error']}")
-
-        if self.timer is not None:
-            print("\n  [timer running - will auto-stop]")
-
-        print(
-            "\nCommands: start | stop | limit <mA> <mV> | "
-            "timer <minutes> | quit"
-        )
-
-    def status_loop(self):
-        while self.running:
-            waited = 0.0
-
-            while waited < self.REFRESH_SECONDS:
-                if self.typing.is_set():
-                    break
-                time.sleep(0.1)
-                waited += 0.1
-
-            if self.typing.is_set():
-                continue
-
-            self.render(self.charger.read_status(self.channel))
-
-    def cancel_timer(self):
-        if self.timer is not None:
-            self.timer.cancel()
-            self.timer = None
-
-    def timer_stop(self):
-        self.timer = None
-        self.charger.stop(self.channel)
-
-    def handle_command(self, command):
-        parts = command.split()
-        if not parts:
-            return True
-
-        operation = parts[0].lower()
-
-        if operation in ("quit", "exit"):
-            return False
-
-        if operation == "start":
-            self.cancel_timer()
-            ok = self.charger.start(self.channel)
-            print("Started." if ok else f"Failed to start: {self.charger.error}")
-
-        elif operation == "stop":
-            self.cancel_timer()
-            ok = self.charger.stop(self.channel)
-            print("Stopped." if ok else f"Failed to stop: {self.charger.error}")
-
-        elif operation == "limit" and len(parts) == 3:
-            try:
-                current_ma, voltage_mv = int(parts[1]), int(parts[2])
-            except ValueError:
-                print("Usage: limit <current_mA> <voltage_mV>")
-                return True
-
-            ok, current_ma, voltage_mv = self.charger.set_limits(
-                self.channel, current_ma, voltage_mv
-            )
-
-            if ok:
-                print(
-                    f"Limits set: {current_ma}mA / {voltage_mv}mV "
-                    "(clamped to charger max if needed)"
-                )
-            else:
-                print(f"Failed to set limits: {self.charger.error}")
-
-        elif operation == "timer" and len(parts) == 2:
-            try:
-                minutes = float(parts[1])
-            except ValueError:
-                print("Usage: timer <minutes>")
-                return True
-
-            self.cancel_timer()
-
-            if not self.charger.start(self.channel):
-                print(f"Failed to start: {self.charger.error}")
-                return True
-
-            self.timer = threading.Timer(minutes * 60, self.timer_stop)
-            self.timer.daemon = True
-            self.timer.start()
-            print(f"Started, will auto-stop in {minutes} minutes.")
-
-        else:
-            print(
-                "Unknown command. Options: start | stop | "
-                "limit <mA> <mV> | timer <minutes> | quit"
-            )
-
-        return True
-
-    def run(self):
-        thread = threading.Thread(target=self.status_loop, daemon=True)
-        thread.start()
-
-        try:
-            while self.running:
-                self.typing.set()
-                try:
-                    command = input("\n> ").strip()
-                finally:
-                    self.typing.clear()
-
-                if not self.handle_command(command):
-                    break
-
-        except KeyboardInterrupt:
-            print("\nInterrupted.")
-        finally:
-            self.running = False
-            self.cancel_timer()
-
-
-def main():
+def main(stdscr):
+    curses.curs_set(0)
+    stdscr.nodelay(True)   
+    stdscr.timeout(100)     
     charger = ICharger()
+    
+    stdscr.addstr(0, 0, "Connecting to iCharger 406 DUO...")
+    stdscr.refresh()
 
-    print("Connecting to iCharger 406 DUO...")
+    stdscr.addstr("Connecting to iCharger 406 DUO...")
+    stdscr.refresh()
+    
     if not charger.connect():
-        print(f"Could not connect: {charger.error}")
-        print(
-            "Check the USB cable and that USB mode is selected on the "
-            "charger (System Menu -> Communication -> USB Port)."
-        )
+        stdscr.addstr(2, 0, f"Could not connect: {charger.error}")
+        stdscr.addstr(4, 0, "Press any key to exit.")
+        stdscr.nodelay(False)
+        stdscr.getch()
         return
 
-    try:
-        info = charger.read_device_info()
-        if info:
-            print(
-                f"Connected. Device ID {info['device_id']}, "
-                f"SW v{info['sw_version']}, HW v{info['hw_version']}"
-            )
+    stdscr.clear()
+    stdscr.addstr(0, 0, "Which channel? [1 or 2]: ")
+    stdscr.refresh()
+    stdscr.nodelay(False)
+    
+    choice = stdscr.getch()
+    channel = 1 if choice == ord('2') else 0
+    
+    stdscr.nodelay(True)
 
-        choice = input("Which channel? [1/2]: ").strip()
-        channel = 1 if choice == "2" else 0
+    last_refresh = 0.0
+    refresh_interval = 1.0     # eefresh charger telemetry once per second
+    input_buffer = ""
+    status_msg = ""
+    running = True
 
-        Monitor(charger, channel).run()
-    finally:
-        charger.disconnect()
-        print("Disconnected.")
+    while running:
+        current_time = time.time()
+        
+        if current_time - last_refresh >= refresh_interval:
+            last_refresh = current_time
+            status = charger.read_status(channel)
+            
+            stdscr.clear()
+            label = "CH1" if channel == 0 else "CH2"
+            stdscr.addstr(0, 0, f"iCharger 406 DUO - {label} [Single-Threaded Loop]")
+            
+            if status is None:
+                stdscr.addstr(2, 2, f"Status read failed: {charger.error}", curses.A_REVERSE)
+            else:
+                stdscr.addstr(2, 2, f"Status:   {status['run_status_name']}")
+                stdscr.addstr(3, 2, f"Voltage:  {status['voltage_v']:.3f} V")
+                stdscr.addstr(4, 2, f"Current:  {status['current_a']:.2f} A")
+                stdscr.addstr(5, 2, f"Capacity: {status['capacity_mah']} mAh")
+                stdscr.addstr(6, 2, f"Temp:     {status['temp_c']:.1f} C")
+                
+                if status["cells_mv"]:
+                    cells = "  ".join(f"{v}mV" for v in status["cells_mv"])
+                    stdscr.addstr(7, 2, f"Cells:    {cells}")
+            
+            stdscr.addstr(9, 0, "Commands: start | stop | limit <mA> <mV> | quit")
+            if status_msg:
+                stdscr.addstr(10, 2, f"Result: {status_msg}")
 
+        stdscr.addstr(12, 0, f"> {input_buffer}")
+        stdscr.clrtoeol()
+        stdscr.refresh()
+
+        ch = stdscr.getch()
+        
+        if ch == -1:
+            continue
+            
+        elif ch in (ord('\n'), ord('\r')):
+            cmd = input_buffer.strip().lower()
+            parts = cmd.split()
+            input_buffer = ""
+            
+            if not parts:
+                continue
+                
+            op = parts[0]
+            
+            if op in ("quit", "exit"):
+                running = False
+                
+            elif op == "start":
+                ok = charger.start(channel)
+                status_msg = "Started." if ok else f"Failed: {charger.error}"
+                
+            elif op == "stop":
+                ok = charger.stop(channel)
+                status_msg = "Stopped." if ok else f"Failed: {charger.error}"
+                
+            elif op == "limit" and len(parts) == 3:
+                try:
+                    ok, c, v = charger.set_limits(channel, int(parts[1]), int(parts[2]))
+                    status_msg = f"Limits set: {c}mA / {v}mV" if ok else f"Failed: {charger.error}"
+                except ValueError:
+                    status_msg = "Usage: limit <mA> <mV>"
+            else:
+                status_msg = f"Unknown command: '{op}'"
+                
+            last_refresh = 0.0 
+
+        elif ch in (127, 8, curses.KEY_BACKSPACE):
+            input_buffer = input_buffer[:-1]
+            
+        elif 32 <= ch <= 126:
+            input_buffer += chr(ch)
+
+    charger.disconnect()
 
 if __name__ == "__main__":
-    main()
+    curses.wrapper(main)

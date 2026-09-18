@@ -62,7 +62,6 @@ class ICharger:
 
     def __init__(self):
         self.device = None
-        self.lock = threading.Lock()
         self.error = ""
 
     @property
@@ -236,13 +235,12 @@ class ICharger:
         regs = self.read_holding_regs(self.ADDR_CONTROL, 2)
         return regs[self.CTRL_MEMORY] if regs else 0
 
-    def start(self, channel, operation=None):
-        # Start an operation using the currently selected memory preset
+    def start(self, channel, operation=None, memory_slot = 3):
+        # Start an operation using the currently SPECIFIED memory preset
         if operation is None:
             operation = self.OP_CHARGE
 
-        memory = self._current_memory_slot()
-        values = [operation, memory, channel, self.ORDER_UNLOCK, self.ORDER_RUN]
+        values = [operation, memory_slot, channel, self.ORDER_UNLOCK, self.ORDER_RUN]
         return self.write_regs(self.ADDR_CONTROL, values)
 
     def stop(self, channel):
