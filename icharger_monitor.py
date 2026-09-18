@@ -62,7 +62,7 @@ def main(stdscr):
             
             stdscr.clear()
             label = "CH1" if channel == 0 else "CH2"
-            stdscr.addstr(0, 0, f"iCharger 406 DUO - {label} [Single-Threaded Loop]")
+            stdscr.addstr(0, 0, f"iCharger 406 DUO - {label}")
             
             if status is None:
                 stdscr.addstr(2, 2, f"Status read failed: {charger.error}", curses.A_REVERSE)

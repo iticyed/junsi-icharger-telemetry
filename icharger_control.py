@@ -63,6 +63,7 @@ class ICharger:
     def __init__(self):
         self.device = None
         self.error = ""
+        self.lock = threading.Lock()
 
     @property
     def connected(self):
